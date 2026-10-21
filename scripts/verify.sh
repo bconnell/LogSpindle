@@ -2,12 +2,13 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+export CARGO_BUILD_JOBS=1
 python3 scripts/check_text.py
 test -f Cargo.lock || { echo "Cargo.lock is missing; generate, review and commit it first" >&2; exit 1; }
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
-CARGO_BUILD_JOBS=1 cargo build --locked --release
+cargo build --locked --release
 ./target/release/logspindle --help >/dev/null
 ./target/release/logspindle summary tests/fixtures/sample.jsonl --json >/dev/null
 git diff --check
