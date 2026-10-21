@@ -1,0 +1,6 @@
+{"timestamp":"2026-01-01T00:00:00Z","level":"INFO","message":"service started"}
+{"timestamp":"2026-01-01T00:00:01Z","level":"WARN","message":"retry queued"}
+{"timestamp":"2026-01-01T00:00:02Z","level":"ERROR","message":"connection timeout","code":"network_timeout"}
+{"timestamp":"2026-01-01T00:00:03Z","level":"ERROR","message":"connection timeout","code":"network_timeout"}
+{"timestamp":"2026-01-01T00:00:04+00:00","level":"FATAL","message":"backend offline","code":"backend_unavailable"}
+not-json
