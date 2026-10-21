@@ -29,6 +29,7 @@ try {
     $exe = Join-Path 'target/release' 'logspindle.exe'
     if (-not (Test-Path $exe)) { $exe = Join-Path 'target/release' 'logspindle' }
     if (-not (Test-Path $exe)) { throw 'Release executable is missing.' }
+    $exe = (Resolve-Path $exe).Path
     & $exe --help | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Release smoke test failed.' }
     & $exe summary tests/fixtures/sample.jsonl --json | Out-Null
