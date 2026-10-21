@@ -1,0 +1,17 @@
+[package]
+name = "logspindle"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Streaming JSONL log filtering and summaries"
+license = "MIT"
+repository = "https://github.com/bconnell/LogSpindle"
+readme = "README.md"
+keywords = ["logs", "cli", "jsonl", "diagnostics"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+chrono = { version = "0.4.42", default-features = false, features = ["std"] }
+clap = { version = "4.5.51", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
