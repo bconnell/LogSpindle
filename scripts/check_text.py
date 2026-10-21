@@ -90,7 +90,7 @@ def main() -> int:
 
         if data.startswith(b"\xef\xbb\xbf"):
             errors.append(f"{relative}: unexpected UTF-8 BOM")
-        if any(char in content for char in ("\x00", "\x1b", "\x7f")):
+        if any((ord(char) < 32 and char not in "\n\r\t") or ord(char) == 127 for char in content):
             errors.append(f"{relative}: forbidden control character")
         for number, line in enumerate(content.splitlines(), 1):
             if line.rstrip(" \t") != line:
