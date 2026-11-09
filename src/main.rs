@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 type AppResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Parser)]
-#[command(name = "logspindle", version, about = "Inspect newline-delimited JSON application logs")]
+#[command(
+    name = "logspindle",
+    version,
+    about = "Inspect newline-delimited JSON application logs"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -117,8 +121,7 @@ struct Entry {
 }
 
 fn parse_time(raw: &str) -> Result<DateTime<FixedOffset>, String> {
-    DateTime::parse_from_rfc3339(raw)
-        .map_err(|_| format!("invalid RFC 3339 timestamp: {raw}"))
+    DateTime::parse_from_rfc3339(raw).map_err(|_| format!("invalid RFC 3339 timestamp: {raw}"))
 }
 
 fn parse_entry(line: &str) -> Result<Entry, String> {
@@ -166,10 +169,7 @@ struct ScanCounts {
 // The discarded remainder of an oversized record is drained without buffering.
 const MAX_RECORD_BYTES: usize = 1_048_576;
 
-fn read_bounded_record(
-    reader: &mut dyn BufRead,
-    record: &mut Vec<u8>,
-) -> io::Result<Option<bool>> {
+fn read_bounded_record(reader: &mut dyn BufRead, record: &mut Vec<u8>) -> io::Result<Option<bool>> {
     record.clear();
     let mut saw_bytes = false;
     let mut oversized = false;
@@ -331,7 +331,11 @@ fn render_summary<W: Write>(output: &mut W, summary: &Summary, json: bool) -> Ap
         Level::Fatal,
     ] {
         let name = level.as_str();
-        writeln!(output, "  {name:<6} {}", summary.levels.get(name).unwrap_or(&0))?;
+        writeln!(
+            output,
+            "  {name:<6} {}",
+            summary.levels.get(name).unwrap_or(&0)
+        )?;
     }
     writeln!(output, "Top error codes:")?;
     for error in &summary.top_error_codes {
@@ -468,7 +472,8 @@ mod tests {
 
     #[test]
     fn oversized_record_is_skipped_and_later_jsonl_still_parses() {
-        let valid = b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"level\":\"INFO\",\"message\":\"ok\"}\n";
+        let valid =
+            b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"level\":\"INFO\",\"message\":\"ok\"}\n";
         let mut bytes = vec![b'x'; MAX_RECORD_BYTES + 32];
         bytes.push(b'\n');
         bytes.extend_from_slice(valid);
@@ -512,13 +517,19 @@ mod tests {
         bytes.push(b'\n');
         let mut reader = BufReader::with_capacity(17, bytes.as_slice());
         let mut record = Vec::new();
-        assert_eq!(read_bounded_record(&mut reader, &mut record).unwrap(), Some(false));
+        assert_eq!(
+            read_bounded_record(&mut reader, &mut record).unwrap(),
+            Some(false)
+        );
         assert_eq!(record.len(), MAX_RECORD_BYTES);
         assert_eq!(read_bounded_record(&mut reader, &mut record).unwrap(), None);
 
         bytes.insert(MAX_RECORD_BYTES - 1, b'b');
         let mut reader = BufReader::with_capacity(17, bytes.as_slice());
-        assert_eq!(read_bounded_record(&mut reader, &mut record).unwrap(), Some(true));
+        assert_eq!(
+            read_bounded_record(&mut reader, &mut record).unwrap(),
+            Some(true)
+        );
         assert!(record.is_empty());
     }
 }
