@@ -126,7 +126,9 @@ fn reads_stdin_without_requiring_a_file() {
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     input
-        .write_all(b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"level\":\"INFO\",\"message\":\"hello\"}\n")
+        .write_all(
+            b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"level\":\"INFO\",\"message\":\"hello\"}\n",
+        )
         .unwrap();
     drop(input);
     let output = child.wait_with_output().unwrap();
