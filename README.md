@@ -41,7 +41,7 @@ Read from standard input by omitting the filename or using `-`. Timestamp bounds
 instants, including across different time offsets. `--contains` is case-sensitive. `--min-level` includes all
 higher severities.
 
-By default, invalid records are counted and skipped. A single warning reports the total count to standard error.
+By default, invalid records, invalid UTF-8, and lines larger than 1,048,576 bytes are counted and skipped. The reader drains an oversized line without retaining its full content and continues with the next record. A single warning reports the total count to standard error.
 Use `--strict` to fail at the first invalid record, including invalid timestamps, missing fields, unsupported
 levels, or invalid JSON.
 
@@ -55,9 +55,8 @@ writes records as it reads them. In strict mode, records written before a later 
 ## Limitations
 
 - Only the documented JSONL schema is supported. Plain text, multiline logs, and compressed files are not decoded.
-- The program reads one line at a time but may retain distinct error codes for summary counts. Memory use grows
-  with the longest line and the number of different codes.
-- Files must be valid UTF-8. Read failures stop processing.
+- The program buffers at most 1 MiB of an individual input record, including the newline, and drains oversized records without storing them. Summary memory can still grow with the number and length of distinct error codes; this is not a global constant-memory guarantee.
+- Invalid UTF-8 records are treated as malformed and skipped unless `--strict` is active. Actual input I/O failures stop processing.
 - It does not scrub secrets or personally identifiable content from input records or error codes. Review logs
   before sharing exports.
 - It does not follow files, watch directories, rotate logs, or make network requests.
