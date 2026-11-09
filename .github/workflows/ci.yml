@@ -20,16 +20,5 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Generate source lockfile for review
-        run: cargo generate-lockfile
-      - name: Export lockfile as review artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: proposed-cargo-lock
-          path: Cargo.lock
-          if-no-files-found: error
-          retention-days: 2
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-      - name: Run unit and CLI tests
-        run: cargo test --all-targets --all-features
+      - name: Run full locked source verification on one build worker
+        run: bash scripts/verify.sh
