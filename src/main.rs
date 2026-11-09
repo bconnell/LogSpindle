@@ -162,6 +162,43 @@ struct ScanCounts {
     matched_entries: u64,
 }
 
+// A streaming reader must not allocate an entire attacker-controlled line.
+// The discarded remainder of an oversized record is drained without buffering.
+const MAX_RECORD_BYTES: usize = 1_048_576;
+
+fn read_bounded_record(
+    reader: &mut dyn BufRead,
+    record: &mut Vec<u8>,
+) -> io::Result<Option<bool>> {
+    record.clear();
+    let mut saw_bytes = false;
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(saw_bytes.then_some(oversized));
+        }
+        let length = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        let newline = available[length - 1] == b'\n';
+        if !oversized {
+            if length <= MAX_RECORD_BYTES.saturating_sub(record.len()) {
+                record.extend_from_slice(&available[..length]);
+            } else {
+                record.clear();
+                oversized = true;
+            }
+        }
+        reader.consume(length);
+        saw_bytes = true;
+        if newline {
+            return Ok(Some(oversized));
+        }
+    }
+}
+
 fn scan<F>(
     reader: &mut dyn BufRead,
     selection: &Selection,
@@ -181,14 +218,18 @@ where
     }
 
     let mut counts = ScanCounts::default();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
+    let mut record = Vec::new();
+    while let Some(oversized) = read_bounded_record(reader, &mut record)? {
         counts.total_lines += 1;
-        let entry = match parse_entry(&line) {
+        let parsed = if oversized {
+            Err(format!("record exceeds {MAX_RECORD_BYTES} bytes"))
+        } else {
+            match std::str::from_utf8(&record) {
+                Ok(line) => parse_entry(line),
+                Err(_) => Err("record is not valid UTF-8".to_owned()),
+            }
+        };
+        let entry = match parsed {
             Ok(entry) => entry,
             Err(reason) => {
                 counts.malformed_entries += 1;
@@ -205,7 +246,9 @@ where
         counts.valid_entries += 1;
         if matches_selection(&entry, selection) {
             counts.matched_entries += 1;
-            on_match(&entry, &line)?;
+            let line = std::str::from_utf8(&record)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record is not UTF-8"))?;
+            on_match(&entry, line)?;
         }
     }
     Ok(counts)
