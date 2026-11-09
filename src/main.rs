@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 type AppResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Parser)]
-#[command(name = "logspindle", version, about = "Inspect newline-delimited JSON application logs")]
+#[command(
+    name = "logspindle",
+    version,
+    about = "Inspect newline-delimited JSON application logs"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -117,8 +121,7 @@ struct Entry {
 }
 
 fn parse_time(raw: &str) -> Result<DateTime<FixedOffset>, String> {
-    DateTime::parse_from_rfc3339(raw)
-        .map_err(|_| format!("invalid RFC 3339 timestamp: {raw}"))
+    DateTime::parse_from_rfc3339(raw).map_err(|_| format!("invalid RFC 3339 timestamp: {raw}"))
 }
 
 fn parse_entry(line: &str) -> Result<Entry, String> {
@@ -162,6 +165,40 @@ struct ScanCounts {
     matched_entries: u64,
 }
 
+// A streaming reader must not allocate an entire attacker-controlled line.
+// The discarded remainder of an oversized record is drained without buffering.
+const MAX_RECORD_BYTES: usize = 1_048_576;
+
+fn read_bounded_record(reader: &mut dyn BufRead, record: &mut Vec<u8>) -> io::Result<Option<bool>> {
+    record.clear();
+    let mut saw_bytes = false;
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(saw_bytes.then_some(oversized));
+        }
+        let length = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        let newline = available[length - 1] == b'\n';
+        if !oversized {
+            if length <= MAX_RECORD_BYTES.saturating_sub(record.len()) {
+                record.extend_from_slice(&available[..length]);
+            } else {
+                record.clear();
+                oversized = true;
+            }
+        }
+        reader.consume(length);
+        saw_bytes = true;
+        if newline {
+            return Ok(Some(oversized));
+        }
+    }
+}
+
 fn scan<F>(
     reader: &mut dyn BufRead,
     selection: &Selection,
@@ -181,14 +218,18 @@ where
     }
 
     let mut counts = ScanCounts::default();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
+    let mut record = Vec::new();
+    while let Some(oversized) = read_bounded_record(reader, &mut record)? {
         counts.total_lines += 1;
-        let entry = match parse_entry(&line) {
+        let parsed = if oversized {
+            Err(format!("record exceeds {MAX_RECORD_BYTES} bytes"))
+        } else {
+            match std::str::from_utf8(&record) {
+                Ok(line) => parse_entry(line),
+                Err(_) => Err("record is not valid UTF-8".to_owned()),
+            }
+        };
+        let entry = match parsed {
             Ok(entry) => entry,
             Err(reason) => {
                 counts.malformed_entries += 1;
@@ -205,7 +246,9 @@ where
         counts.valid_entries += 1;
         if matches_selection(&entry, selection) {
             counts.matched_entries += 1;
-            on_match(&entry, &line)?;
+            let line = std::str::from_utf8(&record)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record is not UTF-8"))?;
+            on_match(&entry, line)?;
         }
     }
     Ok(counts)
@@ -288,7 +331,11 @@ fn render_summary<W: Write>(output: &mut W, summary: &Summary, json: bool) -> Ap
         Level::Fatal,
     ] {
         let name = level.as_str();
-        writeln!(output, "  {name:<6} {}", summary.levels.get(name).unwrap_or(&0))?;
+        writeln!(
+            output,
+            "  {name:<6} {}",
+            summary.levels.get(name).unwrap_or(&0)
+        )?;
     }
     writeln!(output, "Top error codes:")?;
     for error in &summary.top_error_codes {
@@ -421,5 +468,68 @@ mod tests {
         options.until = Some(parse_time("2026-01-01T00:00:00Z").unwrap());
         let mut reader = BufReader::new(b"".as_slice());
         assert!(summarize(&mut reader, &options, 10).is_err());
+    }
+
+    #[test]
+    fn oversized_record_is_skipped_and_later_jsonl_still_parses() {
+        let valid =
+            b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"level\":\"INFO\",\"message\":\"ok\"}\n";
+        let mut bytes = vec![b'x'; MAX_RECORD_BYTES + 32];
+        bytes.push(b'\n');
+        bytes.extend_from_slice(valid);
+        let mut reader = BufReader::with_capacity(23, bytes.as_slice());
+        let report = summarize(&mut reader, &selection(), 10).unwrap();
+        assert_eq!(report.total_lines, 2);
+        assert_eq!(report.malformed_entries, 1);
+        assert_eq!(report.valid_entries, 1);
+        assert_eq!(report.matched_entries, 1);
+        assert_eq!(report.levels.get("INFO"), Some(&1));
+    }
+
+    #[test]
+    fn strict_mode_rejects_oversized_line_without_including_payload() {
+        let mut bytes = vec![b'q'; MAX_RECORD_BYTES + 1];
+        bytes.push(b'\n');
+        let mut reader = BufReader::with_capacity(11, bytes.as_slice());
+        let mut options = selection();
+        options.strict = true;
+        let error = summarize(&mut reader, &options, 10).err().unwrap();
+        assert!(error.to_string().contains("line 1: record exceeds"));
+        assert!(!error.to_string().contains("qqqq"));
+    }
+
+    #[test]
+    fn malformed_utf8_line_is_skipped_and_counted_without_allocating_text() {
+        let mut bytes = vec![0xff, b'\n'];
+        bytes.extend_from_slice(
+            b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"level\":\"WARN\",\"message\":\"ok\"}\n",
+        );
+        let mut reader = BufReader::new(bytes.as_slice());
+        let counts = scan(&mut reader, &selection(), |_, _| Ok(())).unwrap();
+        assert_eq!(counts.total_lines, 2);
+        assert_eq!(counts.malformed_entries, 1);
+        assert_eq!(counts.valid_entries, 1);
+    }
+
+    #[test]
+    fn bounded_reader_accepts_exact_limit_and_rejects_next_byte() {
+        let mut bytes = vec![b'a'; MAX_RECORD_BYTES - 1];
+        bytes.push(b'\n');
+        let mut reader = BufReader::with_capacity(17, bytes.as_slice());
+        let mut record = Vec::new();
+        assert_eq!(
+            read_bounded_record(&mut reader, &mut record).unwrap(),
+            Some(false)
+        );
+        assert_eq!(record.len(), MAX_RECORD_BYTES);
+        assert_eq!(read_bounded_record(&mut reader, &mut record).unwrap(), None);
+
+        bytes.insert(MAX_RECORD_BYTES - 1, b'b');
+        let mut reader = BufReader::with_capacity(17, bytes.as_slice());
+        assert_eq!(
+            read_bounded_record(&mut reader, &mut record).unwrap(),
+            Some(true)
+        );
+        assert!(record.is_empty());
     }
 }
